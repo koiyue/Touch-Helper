@@ -1,0 +1,6 @@
+Shell_TrayWnd
+Progman
+Button
+WorkerW
+TaskManagerWindow
+Windows.UI.Core.CoreWindow

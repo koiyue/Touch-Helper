@@ -1,0 +1,13 @@
+C:\Users\koiou\source\repos\ConsoleApp2\obj\Debug\ConsoleApp2.csproj.AssemblyReference.cache
+C:\Users\koiou\source\repos\ConsoleApp2\obj\Debug\ConsoleApp2.csproj.CoreCompileInputs.cache
+C:\Users\koiou\source\repos\ConsoleApp2\bin\Debug\System.Net.Http.Formatting.dll
+C:\Users\koiou\source\repos\ConsoleApp2\obj\Debug\Interop.EnvDTE.dll
+C:\Users\koiou\source\repos\ConsoleApp2\obj\Debug\Interop.VSLangProj.dll
+C:\Users\koiou\source\repos\ConsoleApp2\obj\Debug\Interop.VSLangProj2.dll
+C:\Users\koiou\source\repos\ConsoleApp2\obj\Debug\ConsoleApp2.csproj.ResolveComReference.cache
+C:\Users\koiou\source\repos\ConsoleApp2\obj\Debug\ConsoleA.D5FB4C91.Up2Date
+C:\Users\koiou\source\repos\ConsoleApp2\bin\Debug\stateApp.exe.config
+C:\Users\koiou\source\repos\ConsoleApp2\bin\Debug\stateApp.exe
+C:\Users\koiou\source\repos\ConsoleApp2\bin\Debug\stateApp.pdb
+C:\Users\koiou\source\repos\ConsoleApp2\obj\Debug\stateApp.exe
+C:\Users\koiou\source\repos\ConsoleApp2\obj\Debug\stateApp.pdb

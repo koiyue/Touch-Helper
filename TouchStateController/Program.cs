@@ -1,0 +1,340 @@
+﻿using System.Runtime.InteropServices;
+using System.Collections.Generic;
+
+namespace TouchStateMachine
+{
+
+    using System;
+    using System.IO;
+    using System.IO.Compression;
+    using System.Linq;
+
+    class LogManager
+    {
+        private const long MaxLogSize = 50L * 1024 * 1024; // 50MB
+        private const int MaxArchiveCount = 20;
+        private static string logFile = "all_touch_log.txt";
+        private static string logDir = "logs";
+
+        public static void WriteLog(string logLine)
+        {
+            Directory.CreateDirectory(logDir);
+            string logPath = Path.Combine(logDir, logFile);
+
+            if (NeedArchive(logPath))
+            {
+                ArchiveLog(logPath);
+            }
+
+            File.AppendAllText(logPath, logLine + Environment.NewLine);
+        }
+
+        private static bool NeedArchive(string logPath)
+        {
+            if (!File.Exists(logPath)) return false;
+
+            FileInfo fi = new FileInfo(logPath);
+            if (fi.Length > MaxLogSize) return true;
+
+            string today = DateTime.Now.ToString("yyyyMMdd");
+            string logDate = File.GetCreationTime(logPath).ToString("yyyyMMdd");
+            return today != logDate;
+        }
+
+        private static void ArchiveLog(string logPath)
+        {
+            if (!File.Exists(logPath)) return;
+
+            string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            string archiveName = $"all_touch_log_{timestamp}.gz";
+            string archivePath = Path.Combine(logDir, archiveName);
+
+            // 压缩为 .gz 文件
+            using (FileStream originalFileStream = File.OpenRead(logPath))
+            using (FileStream compressedFileStream = File.Create(archivePath))
+            using (GZipStream compressionStream = new GZipStream(compressedFileStream, CompressionLevel.Optimal))
+            {
+                originalFileStream.CopyTo(compressionStream);
+            }
+
+            File.Delete(logPath);
+
+            // 保留最多 80 个归档文件
+            var archives = new DirectoryInfo(logDir).GetFiles("*.gz")
+                .OrderBy(f => f.CreationTime).ToList();
+
+            while (archives.Count > MaxArchiveCount)
+            {
+                archives.First().Delete();
+                archives.RemoveAt(0);
+            }
+        }
+    }
+
+
+    class Program
+    {
+        // Windows 消息常量
+        const int WM_INPUT = 0x00FF;
+        const int RIDEV_INPUTSINK = 0x00000100;
+        const int RIDEV_DEVNOTIFY = 0x00002000;
+        const int RID_INPUT = 0x10000003;
+
+        // HID 使用页和用途常量
+        const ushort HID_USAGE_PAGE_DIGITIZER = 0x0D;
+        const ushort HID_USAGE_TOUCHSCREEN = 0x04;
+        const ushort HID_USAGE_PEN = 0x02;
+
+        // 屏幕分辨率
+        const int ScreenWidth = 2560;
+        const int ScreenHeight = 1600;
+
+        // 设备报告的最大坐标值
+        const int DeviceMaxX = 3408;
+        const int DeviceMaxY = 2064;
+
+        // 边缘阈值
+        const int EdgeThreshold = 20;
+
+        // Win32 消息常量
+        const int WM_CLOSE = 0x0010;
+
+        // 状态变量
+        static bool isPressed = false;
+        static int lastX = -1;
+        static int lastY = -1;
+        static int delayTime = 0;
+        static DateTime lastTime = DateTime.MinValue;
+        static Queue<double> speedHistory = new Queue<double>();
+        static string currentState = "";
+
+        // 结构体和 API 声明
+        [StructLayout(LayoutKind.Sequential)]
+        struct RAWINPUTDEVICE
+        {
+            public ushort usUsagePage;
+            public ushort usUsage;
+            public int dwFlags;
+            public IntPtr hwndTarget;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct RAWINPUTHEADER
+        {
+            public int dwType;
+            public int dwSize;
+            public IntPtr hDevice;
+            public IntPtr wParam;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct WNDCLASS
+        {
+            public uint style;
+            public WndProc lpfnWndProc;
+            public int cbClsExtra;
+            public int cbWndExtra;
+            public IntPtr hInstance;
+            public IntPtr hIcon;
+            public IntPtr hCursor;
+            public IntPtr hbrBackground;
+            public string lpszMenuName;
+            public string lpszClassName;
+        }
+
+        delegate IntPtr WndProc(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+        [StructLayout(LayoutKind.Sequential)]
+        struct MSG
+        {
+            public IntPtr hWnd;
+            public uint message;
+            public IntPtr wParam;
+            public IntPtr lParam;
+            public uint time;
+            public int pt_x;
+            public int pt_y;
+        }
+
+        // Win32 API 声明
+        [DllImport("user32.dll", SetLastError = true)]
+        static extern bool RegisterRawInputDevices(RAWINPUTDEVICE[] pRawInputDevices, int uiNumDevices, int cbSize);
+
+        [DllImport("user32.dll")]
+        static extern uint GetRawInputData(IntPtr hRawInput, uint uiCommand, IntPtr pData, ref uint pcbSize, int cbSizeHeader);
+
+        [DllImport("user32.dll")]
+        static extern IntPtr DefWindowProc(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        static extern ushort RegisterClass(ref WNDCLASS lpWndClass);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        static extern IntPtr CreateWindowEx(
+            int dwExStyle, string lpClassName, string lpWindowName,
+            int dwStyle, int x, int y, int nWidth, int nHeight,
+            IntPtr hWndParent, IntPtr hMenu, IntPtr hInstance, IntPtr lpParam);
+
+        [DllImport("user32.dll")]
+        static extern bool GetMessage(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
+
+        [DllImport("user32.dll")]
+        static extern bool TranslateMessage(ref MSG lpMsg);
+
+        [DllImport("user32.dll")]
+        static extern IntPtr DispatchMessage(ref MSG lpMsg);
+
+        [DllImport("user32.dll")]
+        static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        static extern bool PostMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
+
+        // 改进后的 MyWndProc
+        static IntPtr MyWndProc(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam)
+        {
+            if (msg == WM_INPUT)
+            {
+                uint dwSize = 0;
+                GetRawInputData(lParam, RID_INPUT, IntPtr.Zero, ref dwSize, Marshal.SizeOf(typeof(RAWINPUTHEADER)));
+                if (dwSize > 0)
+                {
+                    IntPtr buffer = IntPtr.Zero;
+                    try
+                    {
+                        buffer = Marshal.AllocHGlobal((int)dwSize);
+                        if (GetRawInputData(lParam, RID_INPUT, buffer, ref dwSize, Marshal.SizeOf(typeof(RAWINPUTHEADER))) == dwSize)
+                        {
+                            byte[] rawData = new byte[dwSize];
+                            Marshal.Copy(buffer, rawData, 0, (int)dwSize);
+
+                            if (rawData.Length > 34)
+                            {
+                                int xRaw = rawData[28] | (rawData[29] << 8);
+                                int yRaw = rawData[32] | (rawData[33] << 8);
+
+                                int xScreen = (int)((double)xRaw / DeviceMaxX * ScreenWidth);
+                                int yScreen = (int)((double)yRaw / DeviceMaxY * ScreenHeight);
+
+                                byte pressState = rawData[25];
+
+                                if ((DateTime.Now - lastTime).TotalMilliseconds < delayTime && pressState != 0x04 && isPressed)
+                                {
+                                    return DefWindowProc(hWnd, msg, wParam, lParam);
+                                }
+
+                                if (pressState == 0x07 && !isPressed && string.IsNullOrEmpty(currentState))
+                                {
+                                    isPressed = true;
+                                    currentState = "按下";
+                                    lastX = xScreen;
+                                    lastY = yScreen;
+                                    delayTime = 30;
+                                }
+                                else if (pressState == 0x04 && string.IsNullOrEmpty(currentState))
+                                {
+                                    isPressed = false;
+                                    currentState = "松开";
+                                    delayTime = 0;
+                                }
+
+                                double speed = 0;
+                                if (lastX >= 0 && lastY >= 0 && lastTime != DateTime.MinValue)
+                                {
+                                    double dx = xScreen - lastX;
+                                    double dy = yScreen - lastY;
+                                    double distance = Math.Sqrt(dx * dx + dy * dy);
+                                    double dt = (DateTime.Now - lastTime).TotalMilliseconds;
+                                    if (dt > 0)
+                                    {
+                                        speed = distance / dt;
+                                        if (string.IsNullOrEmpty(currentState))
+                                        {
+                                            currentState = (speed <= 0.01) ? "按下-驻留" : "按下-移动";
+                                            delayTime = 200;
+                                        }
+                                    }
+                                }
+                                lastX = xScreen;
+                                lastY = yScreen;
+                                lastTime = DateTime.Now;
+
+                                // 写入日志
+                                try
+                                {
+                                    // 覆盖写入最后一次状态
+                                    File.WriteAllText("last_touch_state.txt", currentState);
+                                    // 增量写入所有触控状态日志
+                                    string logLine = $"[INFO]{DateTime.Now:yyyy:MM:dd:HH:mm:ss.fff} X={xScreen}, Y={yScreen}, 状态={currentState}, 速度={speed}";
+                                    LogManager.WriteLog(logLine);
+
+                                }
+                                catch (Exception ex)
+                                {
+                                    // 写入错误日志
+                                    string logLine = $"[ERROR]{DateTime.Now:yyyy:MM:dd:HH:mm:ss.fff} 写入失败: {ex.Message}{Environment.NewLine}";
+                                    LogManager.WriteLog(logLine);
+                                }
+
+                                if (xScreen <= EdgeThreshold || xScreen >= ScreenWidth - EdgeThreshold)
+                                {
+                                    // 可选：关闭前台窗口
+                                    // IntPtr fgWindow = GetForegroundWindow();
+                                    // if (fgWindow != IntPtr.Zero)
+                                    // {
+                                    //     PostMessage(fgWindow, WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+                                    // }
+                                }
+
+                                currentState = ""; // 清理状态
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        if (buffer != IntPtr.Zero)
+                        {
+                            Marshal.FreeHGlobal(buffer); // 确保释放内存
+                        }
+                    }
+                }
+            }
+            return DefWindowProc(hWnd, msg, wParam, lParam);
+        }
+        static void Main()
+        {
+            // 窗口注册和消息循环
+            WNDCLASS wndClass = new WNDCLASS();
+            wndClass.lpfnWndProc = MyWndProc;
+            wndClass.lpszClassName = "HiddenRawInputWindow";
+
+            RegisterClass(ref wndClass);
+
+            IntPtr hwnd = CreateWindowEx(0, wndClass.lpszClassName, "HiddenRawInputWindow",
+                0, 0, 0, 0, 0, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+
+            RAWINPUTDEVICE[] devices = new RAWINPUTDEVICE[2];
+            devices[0].usUsagePage = HID_USAGE_PAGE_DIGITIZER;
+            devices[0].usUsage = HID_USAGE_TOUCHSCREEN;
+            devices[0].dwFlags = RIDEV_INPUTSINK | RIDEV_DEVNOTIFY;
+            devices[0].hwndTarget = hwnd;
+
+            devices[1].usUsagePage = HID_USAGE_PAGE_DIGITIZER;
+            devices[1].usUsage = HID_USAGE_PEN;
+            devices[1].dwFlags = RIDEV_INPUTSINK | RIDEV_DEVNOTIFY;
+            devices[1].hwndTarget = hwnd;
+
+            RegisterRawInputDevices(devices, devices.Length, Marshal.SizeOf(typeof(RAWINPUTDEVICE)));
+
+            MSG msg;
+            while (GetMessage(out msg, IntPtr.Zero, 0, 0))
+            {
+                TranslateMessage(ref msg);
+                DispatchMessage(ref msg);
+
+                // 可选：调试时打印内存占用
+                // Console.WriteLine($"Memory: {GC.GetTotalMemory(false) / 1024 / 1024} MB");
+            }
+        }
+    }
+}
